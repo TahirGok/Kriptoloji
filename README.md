@@ -14,6 +14,12 @@ Bu proje, Karadeniz Teknik Üniversitesi Of Teknoloji Fakültesi Yazılım Mühe
 * **Platform:** Masaüstü Uygulaması
 * **Kullanılan Temel Araçlar:**  Kriptografik Kütüphaneler, Wireshark (Paket Analizi için)
 
+## 🔍 Wireshark İnceleme Notu
+Haberleşme *65432* numaralı port üzerinden yapılmaktadır. 
+guvensiz_mod.pcapng dosyasını Wireshark ile açtıktan sonra mesajları net görebilmek için filtre çubuğuna şunu yazabilirsiniz:
+tcp.port == 65432
+Ardından uzunluğu en yüksek olan [PSH, ACK] paketine sağ tıklayıp *Follow -> TCP Stream* diyerek açık metni görüntüleyebilirsiniz.
+
 
 
 
