@@ -4,6 +4,8 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 HOST = '127.0.0.1'
 PORT = 65432
@@ -39,6 +41,34 @@ def server_rsa_handshake(conn):
             label=None
         )
     )
+    return aes_key
+
+def server_ecc_handshake(conn):
+    """Sunucu için ECC anahtar çifti üretir, açık anahtarı gönderir ve ortak sırrı hesaplar."""
+    # 1. Sunucu ECC anahtar çiftini üretir
+    private_key = ec.generate_private_key(ec.SECP256R1())
+    public_key = private_key.public_key()
+    
+    # 2. Açık anahtarı istemciye gönderir
+    public_key_bytes = public_key.public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo
+    )
+    conn.sendall(public_key_bytes)
+    
+    # 3. İstemcinin açık anahtarını alır
+    client_pub_bytes = conn.recv(4096)
+    client_public_key = serialization.load_pem_public_key(client_pub_bytes)
+    
+    # 4. Ortak sırrı hesaplar ve 16 byte AES anahtarı türetir
+    shared_key = private_key.exchange(ec.ECDH(), client_public_key)
+    aes_key = HKDF(
+        algorithm=hashes.SHA256(),
+        length=16,
+        salt=None,
+        info=b'handshake data',
+    ).derive(shared_key)
+    
     return aes_key
 
 def yonlendir(gonderen_conn, veri):
