@@ -6,6 +6,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+from cryptography.hazmat.primitives.asymmetric import dh
 
 HOST = '127.0.0.1'
 PORT = 65432
@@ -62,6 +63,37 @@ def server_ecc_handshake(conn):
     
     # 4. Ortak sırrı hesaplar ve 16 byte AES anahtarı türetir
     shared_key = private_key.exchange(ec.ECDH(), client_public_key)
+    aes_key = HKDF(
+        algorithm=hashes.SHA256(),
+        length=16,
+        salt=None,
+        info=b'handshake data',
+    ).derive(shared_key)
+    
+    return aes_key
+
+def server_dh_handshake(conn):
+    """Sunucu için DH-2048 anahtar çifti üretir, açık anahtarı gönderir ve ortak sırrı hesaplar."""
+    print("[SUNUCU] DH-2048 parametreleri üretiliyor (Bu işlem birkaç saniye sürebilir)...")
+    
+    # 1. DH Parametreleri ve anahtar üretimi
+    parameters = dh.generate_parameters(generator=2, key_size=2048)
+    private_key = parameters.generate_private_key()
+    public_key = private_key.public_key()
+    
+    # 2. Açık anahtarı (ve içindeki parametreleri) istemciye gönder
+    public_key_bytes = public_key.public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo
+    )
+    conn.sendall(public_key_bytes)
+    
+    # 3. İstemcinin açık anahtarını al
+    client_pub_bytes = conn.recv(4096)
+    client_public_key = serialization.load_pem_public_key(client_pub_bytes)
+    
+    # 4. Ortak sırrı hesaplar ve 16 byte AES anahtarı türetir
+    shared_key = private_key.exchange(client_public_key)
     aes_key = HKDF(
         algorithm=hashes.SHA256(),
         length=16,
