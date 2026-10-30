@@ -111,3 +111,51 @@ def decrypt_block(block, round_keys):
     sub_bytes(state, inv=True)
     add_round_key(state, round_keys[0])
     return bytes([state[r][c] for c in range(4) for r in range(4)])
+
+
+def pkcs7_pad(data):
+    padding_length = 16 - len(data) % 16
+    return data + bytes([padding_length]) * padding_length
+
+
+def pkcs7_unpad(data):
+    if not data or len(data) % 16:
+        raise ValueError("Doldurulmuş veri boş olamaz ve 16 baytın katı olmalıdır.")
+    padding_length = data[-1]
+    if padding_length < 1 or padding_length > 16:
+        raise ValueError("PKCS#7 dolgusu geçersiz.")
+    if data[-padding_length:] != bytes([padding_length]) * padding_length:
+        raise ValueError("PKCS#7 dolgusu geçersiz.")
+    return data[:-padding_length]
+
+
+def encrypt_cbc(data, round_keys, iv):
+    if len(iv) != 16:
+        raise ValueError("CBC IV değeri 16 bayt olmalıdır.")
+
+    padded_data = pkcs7_pad(data)
+    ciphertext = bytearray()
+    previous_block = iv
+    for offset in range(0, len(padded_data), 16):
+        block = padded_data[offset:offset + 16]
+        mixed_block = bytes(a ^ b for a, b in zip(block, previous_block))
+        encrypted_block = encrypt_block(mixed_block, round_keys)
+        ciphertext.extend(encrypted_block)
+        previous_block = encrypted_block
+    return bytes(ciphertext)
+
+
+def decrypt_cbc(ciphertext, round_keys, iv):
+    if len(iv) != 16:
+        raise ValueError("CBC IV değeri 16 bayt olmalıdır.")
+    if not ciphertext or len(ciphertext) % 16:
+        raise ValueError("CBC şifreli veri 16 baytlık bloklardan oluşmalıdır.")
+
+    plaintext = bytearray()
+    previous_block = iv
+    for offset in range(0, len(ciphertext), 16):
+        block = ciphertext[offset:offset + 16]
+        decrypted_block = decrypt_block(block, round_keys)
+        plaintext.extend(a ^ b for a, b in zip(decrypted_block, previous_block))
+        previous_block = block
+    return pkcs7_unpad(bytes(plaintext))
