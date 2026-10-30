@@ -1,13 +1,15 @@
 import socket
 import threading
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives import serialization
 
 HOST = '127.0.0.1'
 PORT = 65432
 
-# Bağlı istemciler: {conn: istemci_no}
 clients = {}
 clients_lock = threading.Lock()
-
 
 def yeni_istemci_no():
     """Kullanılmayan en küçük istemci numarasını verir (1, 2, 3...)."""
@@ -16,6 +18,28 @@ def yeni_istemci_no():
         no += 1
     return no
 
+def server_rsa_handshake(conn):
+    """Bu bağlantıya özel anahtar çifti üretir ve istemciden gelen şifreli AES anahtarını çözer."""
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    public_key = private_key.public_key()
+    
+    public_key_bytes = public_key.public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo
+    )
+    conn.sendall(public_key_bytes)
+    
+    encrypted_aes_key = conn.recv(4096)
+    
+    aes_key = private_key.decrypt(
+        encrypted_aes_key,
+        padding.OAEP(
+            mgf=padding.MGF1(algorithm=hashes.SHA256()),
+            algorithm=hashes.SHA256(),
+            label=None
+        )
+    )
+    return aes_key
 
 def yonlendir(gonderen_conn, veri):
     """Gelen mesajı gönderen hariç tüm istemcilere iletir."""
@@ -26,13 +50,16 @@ def yonlendir(gonderen_conn, veri):
             try:
                 conn.sendall(veri)
             except OSError:
-                pass  # Bağlantısı kopmuş istemciyi kendi thread'i temizleyecek
-
+                pass  
 
 def istemci_yonet(conn, addr, no):
     """Her istemci için ayrı thread'de çalışır."""
     print(f"Bağlantı sağlandı: İstemci {no} {addr}")
     try:
+        # --- RSA El Sıkışma Aşaması ---
+        aes_anahtari = server_rsa_handshake(conn)
+        print(f"[SUNUCU] İstemci {no} ile RSA el sıkışması tamamlandı. Ortak AES (Hex): {aes_anahtari.hex()}")
+        
         while True:
             data = conn.recv(4096)
             if not data:
@@ -47,7 +74,6 @@ def istemci_yonet(conn, addr, no):
             clients.pop(conn, None)
         conn.close()
         print(f"İstemci {no} ayrıldı.")
-
 
 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
