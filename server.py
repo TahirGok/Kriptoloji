@@ -14,6 +14,23 @@ PORT = 65432
 clients = {}
 clients_lock = threading.Lock()
 
+# Her istemcinin sunucuyla paylaştığı AES-128 anahtarı: {conn: aes_key}
+anahtarlar = {}
+
+# DH parametreleri pahalı olduğu için bir kez üretilip tüm bağlantılarda kullanılır
+_dh_parametreleri = None
+_dh_lock = threading.Lock()
+
+
+def dh_parametrelerini_al():
+    """DH-2048 parametrelerini ilk istekte üretir, sonrakilerde aynısını verir."""
+    global _dh_parametreleri
+    with _dh_lock:
+        if _dh_parametreleri is None:
+            print("[SUNUCU] DH-2048 parametreleri üretiliyor (Bu işlem birkaç saniye sürebilir)...")
+            _dh_parametreleri = dh.generate_parameters(generator=2, key_size=2048)
+        return _dh_parametreleri
+
 def yeni_istemci_no():
     """Kullanılmayan en küçük istemci numarasını verir (1, 2, 3...)."""
     no = 1
@@ -74,10 +91,8 @@ def server_ecc_handshake(conn):
 
 def server_dh_handshake(conn):
     """Sunucu için DH-2048 anahtar çifti üretir, açık anahtarı gönderir ve ortak sırrı hesaplar."""
-    print("[SUNUCU] DH-2048 parametreleri üretiliyor (Bu işlem birkaç saniye sürebilir)...")
-    
-    # 1. DH Parametreleri ve anahtar üretimi
-    parameters = dh.generate_parameters(generator=2, key_size=2048)
+    # 1. DH Parametreleri (bir kez üretilir) ve bu bağlantıya özel anahtar üretimi
+    parameters = dh_parametrelerini_al()
     private_key = parameters.generate_private_key()
     public_key = private_key.public_key()
     
@@ -103,6 +118,15 @@ def server_dh_handshake(conn):
     
     return aes_key
 
+# İstemcinin gönderdiği seçim baytı -> (algoritma adı, el sıkışma fonksiyonu)
+# Kyber eklendiğinde buraya b'4' olarak girilecek.
+EL_SIKISMALAR = {
+    b'1': ("RSA-2048", server_rsa_handshake),
+    b'2': ("ECC (ECDH)", server_ecc_handshake),
+    b'3': ("DH-2048", server_dh_handshake),
+}
+
+
 def yonlendir(gonderen_conn, veri):
     """Gelen mesajı gönderen hariç tüm istemcilere iletir."""
     with clients_lock:
@@ -118,10 +142,19 @@ def istemci_yonet(conn, addr, no):
     """Her istemci için ayrı thread'de çalışır."""
     print(f"Bağlantı sağlandı: İstemci {no} {addr}")
     try:
-        # --- RSA El Sıkışma Aşaması ---
-        aes_anahtari = server_rsa_handshake(conn)
-        print(f"[SUNUCU] İstemci {no} ile RSA el sıkışması tamamlandı. Ortak AES (Hex): {aes_anahtari.hex()}")
-        
+        # --- Algoritma seçimi: istemci ilk olarak 1 bayt gönderir ---
+        secim = conn.recv(1)
+        if secim not in EL_SIKISMALAR:
+            print(f"[SUNUCU] İstemci {no} geçersiz algoritma seçti: {secim!r}")
+            return
+        algo_adi, el_sikisma = EL_SIKISMALAR[secim]
+
+        # --- Seçilen algoritmayla el sıkışma ---
+        aes_anahtari = el_sikisma(conn)
+        with clients_lock:
+            anahtarlar[conn] = aes_anahtari
+        print(f"[SUNUCU] İstemci {no} ile {algo_adi} el sıkışması tamamlandı. Ortak AES (Hex): {aes_anahtari.hex()}")
+
         while True:
             data = conn.recv(4096)
             if not data:
@@ -131,9 +164,12 @@ def istemci_yonet(conn, addr, no):
             yonlendir(conn, f"[İstemci {no}] {mesaj}".encode('utf-8'))
     except ConnectionError:
         pass
+    except Exception as e:
+        print(f"[SUNUCU] İstemci {no} ile hata: {e}")
     finally:
         with clients_lock:
             clients.pop(conn, None)
+            anahtarlar.pop(conn, None)
         conn.close()
         print(f"İstemci {no} ayrıldı.")
 

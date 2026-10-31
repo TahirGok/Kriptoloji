@@ -86,6 +86,15 @@ def client_dh_handshake(sock):
     
     return aes_key
 
+# Seçim tuşu -> (algoritma adı, el sıkışma fonksiyonu). Sunucudaki tuşlarla aynı olmalı.
+# Kyber eklendiğinde buraya '4' olarak girilecek.
+EL_SIKISMALAR = {
+    '1': ("RSA-2048", client_rsa_handshake),
+    '2': ("ECC (ECDH)", client_ecc_handshake),
+    '3': ("DH-2048", client_dh_handshake),
+}
+
+
 def dinle(s):
     """Sunucudan gelen mesajları sürekli ekrana yazar."""
     try:
@@ -100,11 +109,24 @@ def dinle(s):
 
 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
     s.connect((HOST, PORT))
-    
-    # --- RSA El Sıkışma Aşaması ---
-    aes_anahtari = client_rsa_handshake(s)
-    print(f"[İSTEMCİ] RSA el sıkışması tamamlandı. Ortak AES Anahtarı (Hex): {aes_anahtari.hex()}")
-    
+
+    # --- Algoritma seçimi ---
+    print("Anahtar dağıtım yöntemini seçin:")
+    for tus, (ad, _) in EL_SIKISMALAR.items():
+        print(f"  {tus} - {ad}")
+    while True:
+        secim = input("Seçiminiz: ").strip()
+        if secim in EL_SIKISMALAR:
+            break
+        print("Geçersiz seçim, tekrar deneyin.")
+
+    algo_adi, el_sikisma = EL_SIKISMALAR[secim]
+    s.sendall(secim.encode())  # sunucuya 1 bayt: seçilen algoritma
+
+    # --- Seçilen algoritmayla el sıkışma ---
+    aes_anahtari = el_sikisma(s)
+    print(f"[İSTEMCİ] {algo_adi} el sıkışması tamamlandı. Ortak AES Anahtarı (Hex): {aes_anahtari.hex()}")
+
     print("Sunucuya bağlanıldı. Çıkmak için 'cikis' yazın.")
     threading.Thread(target=dinle, args=(s,), daemon=True).start()
 
