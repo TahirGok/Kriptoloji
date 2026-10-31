@@ -7,6 +7,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives.asymmetric import dh
+from protokol import TIP_METIN, mesaj_al, mesaj_gonder
 
 HOST = '127.0.0.1'
 PORT = 65432
@@ -99,12 +100,14 @@ def dinle(s):
     """Sunucudan gelen mesajları sürekli ekrana yazar."""
     try:
         while True:
-            data = s.recv(4096)
-            if not data:
+            cerceve = mesaj_al(s)
+            if cerceve is None:
                 print("Sunucu bağlantıyı kapattı.")
                 break
-            print(data.decode('utf-8'))
-    except OSError:
+            tip, veri = cerceve
+            if tip == TIP_METIN:
+                print(veri.decode('utf-8'))
+    except (OSError, ValueError):
         pass
 
 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -133,9 +136,9 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
     try:
         while True:
             mesaj = input()
-            if mesaj.strip().lower() == "cikis":
+            if mesaj.strip().lower() in ("cikis", "çıkış"):
                 break
             if mesaj:
-                s.sendall(mesaj.encode('utf-8'))
+                mesaj_gonder(s, TIP_METIN, mesaj.encode('utf-8'))
     except (KeyboardInterrupt, EOFError):
         pass

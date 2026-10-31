@@ -7,6 +7,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives.asymmetric import dh
+from protokol import TIP_METIN, mesaj_al, mesaj_gonder
 
 HOST = '127.0.0.1'
 PORT = 65432
@@ -127,14 +128,19 @@ EL_SIKISMALAR = {
 }
 
 
-def yonlendir(gonderen_conn, veri):
-    """Gelen mesajı gönderen hariç tüm istemcilere iletir."""
+def yonlendir(gonderen_conn, tip, veri):
+    """Gelen mesajı, el sıkışmasını tamamlamış diğer istemcilere iletir.
+
+    Henüz el sıkışması süren bir istemciye mesaj gönderilmez, aksi halde
+    el sıkışma baytlarıyla karışırdı. clients_lock tutulduğu için aynı soketa
+    aynı anda iki thread yazamaz, çerçeveler iç içe geçmez.
+    """
     with clients_lock:
-        for conn in list(clients):
+        for conn in list(anahtarlar):
             if conn is gonderen_conn:
                 continue
             try:
-                conn.sendall(veri)
+                mesaj_gonder(conn, tip, veri)
             except OSError:
                 pass  
 
@@ -156,12 +162,16 @@ def istemci_yonet(conn, addr, no):
         print(f"[SUNUCU] İstemci {no} ile {algo_adi} el sıkışması tamamlandı. Ortak AES (Hex): {aes_anahtari.hex()}")
 
         while True:
-            data = conn.recv(4096)
-            if not data:
+            cerceve = mesaj_al(conn)
+            if cerceve is None:
                 break
-            mesaj = data.decode('utf-8')
-            print(f"İstemci {no} -> diğerlerine: {mesaj}")
-            yonlendir(conn, f"[İstemci {no}] {mesaj}".encode('utf-8'))
+            tip, veri = cerceve
+            if tip == TIP_METIN:
+                mesaj = veri.decode('utf-8')
+                print(f"İstemci {no} -> diğerlerine: {mesaj}")
+                yonlendir(conn, TIP_METIN, f"[İstemci {no}] {mesaj}".encode('utf-8'))
+            else:
+                print(f"[SUNUCU] İstemci {no} bilinmeyen mesaj türü gönderdi: {tip!r}")
     except ConnectionError:
         pass
     except Exception as e:
