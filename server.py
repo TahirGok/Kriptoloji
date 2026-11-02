@@ -8,6 +8,7 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives.asymmetric import dh
 from protokol import TIP_METIN, mesaj_al, mesaj_gonder
+from sifreleme import aes_sifrele, aes_coz
 
 HOST = '127.0.0.1'
 PORT = 65432
@@ -128,21 +129,21 @@ EL_SIKISMALAR = {
 }
 
 
-def yonlendir(gonderen_conn, tip, veri):
-    """Gelen mesajı, el sıkışmasını tamamlamış diğer istemcilere iletir.
+def yonlendir(gonderen_conn, tip, duz_veri):
+    """Düz (çözülmüş) veriyi, her alıcının KENDİ AES anahtarıyla yeniden şifreleyip iletir.
 
     Henüz el sıkışması süren bir istemciye mesaj gönderilmez, aksi halde
     el sıkışma baytlarıyla karışırdı. clients_lock tutulduğu için aynı soketa
     aynı anda iki thread yazamaz, çerçeveler iç içe geçmez.
     """
     with clients_lock:
-        for conn in list(anahtarlar):
+        for conn, alici_anahtari in list(anahtarlar.items()):
             if conn is gonderen_conn:
                 continue
             try:
-                mesaj_gonder(conn, tip, veri)
+                mesaj_gonder(conn, tip, aes_sifrele(alici_anahtari, duz_veri))
             except OSError:
-                pass  
+                pass
 
 def istemci_yonet(conn, addr, no):
     """Her istemci için ayrı thread'de çalışır."""
@@ -167,8 +168,14 @@ def istemci_yonet(conn, addr, no):
                 break
             tip, veri = cerceve
             if tip == TIP_METIN:
-                mesaj = veri.decode('utf-8')
-                print(f"İstemci {no} -> diğerlerine: {mesaj}")
+                # 1) Gönderenin anahtarıyla çöz
+                try:
+                    mesaj = aes_coz(aes_anahtari, veri).decode('utf-8')
+                except ValueError:  # UnicodeDecodeError de ValueError'dır
+                    print(f"[SUNUCU] İstemci {no}: mesaj çözülemedi (bozuk veri ya da yanlış anahtar), atlandı.")
+                    continue
+                print(f"İstemci {no} -> diğerlerine: {mesaj}  (gelen şifreli paket: {len(veri)} bayt)")
+                # 2) Her alıcının kendi anahtarıyla yeniden şifreleyip ilet
                 yonlendir(conn, TIP_METIN, f"[İstemci {no}] {mesaj}".encode('utf-8'))
             else:
                 print(f"[SUNUCU] İstemci {no} bilinmeyen mesaj türü gönderdi: {tip!r}")

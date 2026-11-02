@@ -8,6 +8,7 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives.asymmetric import dh
 from protokol import TIP_METIN, mesaj_al, mesaj_gonder
+from sifreleme import aes_sifrele, aes_coz
 
 HOST = '127.0.0.1'
 PORT = 65432
@@ -96,8 +97,8 @@ EL_SIKISMALAR = {
 }
 
 
-def dinle(s):
-    """Sunucudan gelen mesajları sürekli ekrana yazar."""
+def dinle(s, anahtar):
+    """Sunucudan gelen şifreli mesajları çözüp sürekli ekrana yazar."""
     try:
         while True:
             cerceve = mesaj_al(s)
@@ -106,7 +107,10 @@ def dinle(s):
                 break
             tip, veri = cerceve
             if tip == TIP_METIN:
-                print(veri.decode('utf-8'))
+                try:
+                    print(aes_coz(anahtar, veri).decode('utf-8'))
+                except ValueError:
+                    print("[İSTEMCİ] Gelen bir mesaj çözülemedi, atlandı.")
     except (OSError, ValueError):
         pass
 
@@ -131,7 +135,7 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
     print(f"[İSTEMCİ] {algo_adi} el sıkışması tamamlandı. Ortak AES Anahtarı (Hex): {aes_anahtari.hex()}")
 
     print("Sunucuya bağlanıldı. Çıkmak için 'cikis' yazın.")
-    threading.Thread(target=dinle, args=(s,), daemon=True).start()
+    threading.Thread(target=dinle, args=(s, aes_anahtari), daemon=True).start()
 
     try:
         while True:
@@ -139,6 +143,6 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             if mesaj.strip().lower() in ("cikis", "çıkış"):
                 break
             if mesaj:
-                mesaj_gonder(s, TIP_METIN, mesaj.encode('utf-8'))
+                mesaj_gonder(s, TIP_METIN, aes_sifrele(aes_anahtari, mesaj.encode('utf-8')))
     except (KeyboardInterrupt, EOFError):
         pass
